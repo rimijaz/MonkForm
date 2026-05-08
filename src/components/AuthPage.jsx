@@ -243,7 +243,12 @@ const AuthPage = ({ props }) => {
     
     try {
       const endpoint = isSignIn ? 'login' : 'register';
-      const response = await axios.post(`http://localhost:5000/api/auth/${endpoint}`, {
+      
+      // 🔧 ENVIRONMENT VARIABLE: Use Vite environment variable with fallback
+      const apiUrl = import.meta.env.VITE_API_BASE_URL || 'https://monk-form-backend.vercel.app/api';
+      console.log('API URL from environment:', apiUrl);
+      
+      const response = await axios.post(`${apiUrl}/auth/${endpoint}`, {
         firstName: formData.firstName,
         lastName: formData.lastName,
         email: formData.email,
