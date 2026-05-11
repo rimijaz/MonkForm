@@ -6,6 +6,7 @@ import AuthPage from './components/AuthPage';
 import Dashboard from './components/Dashboard';
 import Builder from './components/Builder';
 import Submit from './components/Submit';
+import AdminUsers from './components/AdminUsers';
 import ProtectedRoute from './components/ProtectedRoute';
 import { ThemeProvider } from './contexts/ThemeContext';
 import './styles/accessibility.css';
@@ -140,6 +141,11 @@ function App() {
               <Route path="/submit/:id" element={
                 <ProtectedRoute>
                   <Submit />
+                </ProtectedRoute>
+              } />
+              <Route path="/users" element={
+                <ProtectedRoute>
+                  <AdminUsers />
                 </ProtectedRoute>
               } />
             </Routes>

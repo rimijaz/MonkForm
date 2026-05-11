@@ -56,6 +56,12 @@ import {
 } from '@mui/icons-material';
 import { useTheme } from '../contexts/ThemeContext';
 
+// API base URL
+const isLocal = window.location.hostname === 'localhost';
+const API_BASE_URL = isLocal 
+        ? 'http://localhost:5000/api'  
+        : 'https://monk-form-backend.vercel.app/api';
+
 const Dashboard = ({ }) => {
   const navigate = useNavigate();
   const { isDarkMode, toggleTheme } = useTheme();
@@ -63,12 +69,46 @@ const Dashboard = ({ }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('dashboard');
   const [forms, setForms] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // Fetch forms data from API
+  // Fetch users data from API
+  const fetchUsers = async () => {
+    try {
+      setLoadingUsers(true);
+      console.log('🔍 Dashboard - Fetching users...');
+      
+      const response = await fetch(`${API_BASE_URL}/admin/users`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch users');
+      }
+      
+      const data = await response.json();
+      console.log('✅ Dashboard - Users fetched:', data);
+      setUsers(data);
+    } catch (error) {
+      console.error('❌ Dashboard - Error fetching users:', error);
+      setSnackbar({
+        open: true,
+        message: 'Failed to fetch users',
+        severity: 'error'
+      });
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  // Fetch forms when Dashboard loads
   useEffect(() => {
-    const fetchForms = async () => {
+    const fetchFormsOnLoad = async () => {
       try {
         setLoading(true);
         const token = localStorage.getItem('token');
@@ -77,23 +117,51 @@ const Dashboard = ({ }) => {
           return;
         }
 
-        const response = await formApi.getForms();
+        // Check if user is admin from localStorage
+        const userInfo = JSON.parse(localStorage.getItem('user') || '{}');
+        const isAdmin = userInfo?.role === 'admin';
+        console.log('🔍 Dashboard - Initial load - User role check:', userInfo?.role, 'Is Admin:', isAdmin);
 
-        if (response.success) {
-          setForms(response?.data);
-        } else {
-          console.error('Failed to fetch forms');
-          setSnackbar({
-            open: true,
-            message: response.message,
-            severity: 'error'
+        let response;
+        if (isAdmin) {
+          // Admin: Fetch all forms from admin endpoint
+          console.log('🔍 Dashboard - Initial load - Fetching all forms (admin)');
+          response = await fetch(`${API_BASE_URL}/admin/forms`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
           });
+        } else {
+          // Regular user: Fetch their own forms
+          console.log('🔍 Dashboard - Initial load - Fetching user forms');
+          response = await formApi.getForms();
+        }
+
+        if (isAdmin) {
+          if (!response.ok) {
+            throw new Error('Failed to fetch forms');
+          }
+          const data = await response.json();
+          console.log('✅ Dashboard - Initial load - Admin forms fetched:', data);
+          setForms(data);
+        } else {
+          if (response.success) {
+            setForms(response?.data);
+          } else {
+            console.error('Failed to fetch forms');
+            setSnackbar({
+              open: true,
+              message: response.message,
+              severity: 'error'
+            });
+          }
         }
       } catch (error) {
-        console.error('Error fetching forms:', error);
+        console.error('Error fetching forms on dashboard load:', error);
         setSnackbar({
           open: true,
-          message: error.message,
+          message: 'Failed to fetch forms',
           severity: 'error'
         });
       } finally {
@@ -101,8 +169,84 @@ const Dashboard = ({ }) => {
       }
     };
 
-    fetchForms();
-  }, [navigate]);
+    fetchFormsOnLoad();
+  }, []);
+
+  // Fetch users when users section is activated
+  useEffect(() => {
+    if (activeSection === 'users') {
+      fetchUsers();
+    }
+  }, [activeSection]);
+
+  // Fetch forms when forms section is activated
+  useEffect(() => {
+    if (activeSection === 'forms') {
+      const fetchForms = async () => {
+        try {
+          setLoading(true);
+          const token = localStorage.getItem('token');
+          if (!token) {
+            navigate('/auth');
+            return;
+          }
+
+          // Check if user is admin from localStorage
+          const userInfo = JSON.parse(localStorage.getItem('user') || '{}');
+          const isAdmin = userInfo?.role === 'admin';
+          console.log('🔍 Dashboard - Forms section activated');
+          console.log('👤 Dashboard - User role check:', userInfo?.role, 'Is Admin:', isAdmin);
+
+          let response;
+          if (isAdmin) {
+            // Admin: Fetch all forms from admin endpoint
+            console.log('🔍 Dashboard - Fetching all forms (admin)');
+            response = await fetch(`${API_BASE_URL}/admin/forms`, {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              }
+            });
+          } else {
+            // Regular user: Fetch their own forms
+            console.log('🔍 Dashboard - Fetching user forms');
+            response = await formApi.getForms();
+          }
+
+          if (isAdmin) {
+            if (!response.ok) {
+              throw new Error('Failed to fetch forms');
+            }
+            const data = await response.json();
+            console.log('✅ Dashboard - Admin forms fetched:', data);
+            setForms(data);
+          } else {
+            if (response.success) {
+              setForms(response?.data);
+            } else {
+              console.error('Failed to fetch forms');
+              setSnackbar({
+                open: true,
+                message: response.message,
+                severity: 'error'
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching forms:', error);
+          setSnackbar({
+            open: true,
+            message: 'Failed to fetch forms',
+            severity: 'error'
+          });
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      fetchForms();
+    }
+  }, [activeSection]);
 
   // Mock responses data for responses section
   const mockResponses = [
@@ -364,6 +508,7 @@ const Dashboard = ({ }) => {
           firstName,
           lastName,
           email,
+          role: user.role || 'user',
           fullName: lastName ? `${firstName} ${lastName}` : firstName
         };
       } catch (error) {
@@ -371,6 +516,7 @@ const Dashboard = ({ }) => {
           firstName: 'User',
           lastName: '',
           email: 'user@example.com',
+          role: 'user',
           fullName: 'User'
         };
       }
@@ -379,6 +525,7 @@ const Dashboard = ({ }) => {
       firstName: 'User',
       lastName: '',
       email: 'user@example.com',
+      role: 'user',
       fullName: 'User'
     };
   };
@@ -442,7 +589,7 @@ const Dashboard = ({ }) => {
       // Ctrl/Cmd + 1-5: Navigate to sections
       if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '5') {
         e.preventDefault();
-        const sections = ['dashboard', 'forms', 'responses', 'templates', 'settings'];
+        const sections = ['dashboard', 'forms', 'responses', 'users', 'templates', 'settings'];
         const sectionIndex = parseInt(e.key) - 1;
         if (sectionIndex < sections.length) {
           setActiveSection(sections[sectionIndex]);
@@ -552,11 +699,18 @@ const Dashboard = ({ }) => {
     }));
 
   console.log(recentForms, 'Ahahahahh')
+  // Get user info for role-based menu
+  console.log('🔍 Dashboard - User Info:', userInfo);
+  console.log('🔍 Dashboard - User Role:', userInfo?.role);
+  console.log('🔍 Dashboard - Is Admin:', userInfo?.role === 'admin');
+  const isAdmin = userInfo?.role === 'admin';
+
   const menuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-    { text: 'Forms', icon: <FormIcon />, path: '/forms' },
+    { text: 'Dashboard', icon: <DashboardIcon />, section: 'dashboard' },
+    { text: 'Forms', icon: <FormIcon />, section: 'forms' },
     // { text: 'Responses', icon: <ResponseIcon />, path: '/responses' },
-    { text: 'Templates', icon: <TemplateIcon />, path: '/templates' },
+    ...(isAdmin ? [{ text: 'Users', icon: <PeopleIcon />, section: 'users' }] : []),
+    { text: 'Templates', icon: <TemplateIcon />, section: 'templates' },
     // { text: 'Settings', icon: <SettingsIcon />, p  ath: '/settings' }
   ];
 
@@ -822,25 +976,25 @@ const Dashboard = ({ }) => {
                 <ListItem
                   key={item.text}
                   button
-                  onClick={() => setActiveSection(item.text.toLowerCase())}
-                  selected={activeSection === item.text.toLowerCase()}
+                  onClick={() => item.section ? setActiveSection(item.section) : navigate(item.path)}
+                  selected={activeSection === (item.section || item.text.toLowerCase())}
                   sx={{
                     borderRadius: 2,
                     mb: 1,
                     py: 1.5,
                     px: 2,
                     transition: 'all var(--transition-duration) var(--transition-easing)',
-                    bgcolor: activeSection === item.text.toLowerCase() ? 'var(--accent-primary)' : 'transparent',
-                    boxShadow: activeSection === item.text.toLowerCase() ? '0 4px 20px var(--accent-primary)' : 'none',
+                    bgcolor: activeSection === (item.section || item.text.toLowerCase()) ? 'var(--accent-primary)' : 'transparent',
+                    boxShadow: activeSection === (item.section || item.text.toLowerCase()) ? '0 4px 20px var(--accent-primary)' : 'none',
                     cursor: 'pointer',
                     '&:hover': {
-                      bgcolor: activeSection === item.text.toLowerCase() ? 'var(--accent-hover)' : 'var(--bg-tertiary)',
-                      boxShadow: activeSection === item.text.toLowerCase() ? '0 6px 25px var(--accent-primary)' : 'none',
+                      bgcolor: activeSection === (item.section || item.text.toLowerCase()) ? 'var(--accent-hover)' : 'var(--bg-tertiary)',
+                      boxShadow: activeSection === (item.section || item.text.toLowerCase()) ? '0 6px 25px var(--accent-primary)' : 'none',
                       '& .MuiListItemIcon-root': {
-                        color: activeSection === item.text.toLowerCase() ? 'var(--text-inverse)' : 'var(--accent-primary)'
+                        color: activeSection === (item.section || item.text.toLowerCase()) ? 'var(--text-inverse)' : 'var(--accent-primary)'
                       },
                       '& .MuiListItemText-primary': {
-                        color: activeSection === item.text.toLowerCase() ? 'var(--text-inverse)' : 'var(--text-primary)'
+                        color: activeSection === (item.section || item.text.toLowerCase()) ? 'var(--text-inverse)' : 'var(--text-primary)'
                       }
                     },
                     '&.Mui-selected': {
@@ -972,7 +1126,7 @@ const Dashboard = ({ }) => {
 
         {/* Dashboard Content */}
         <Container maxWidth="xl" sx={{ mt: 4, px: 3 }}>
-          {loading ? (
+          {(activeSection === 'users' ? loadingUsers : loading) ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
               <CircularProgress sx={{ color: '#2A524D' }} />
             </Box>
@@ -1429,6 +1583,106 @@ const Dashboard = ({ }) => {
                         </Grid>
                       ))}
                     </Grid>
+                  </Box>
+                </>
+              )}
+
+              {activeSection === 'users' && (
+                <>
+                  <Box>
+                    <Typography variant="h4" sx={{ color: '#ffffff', mb: 3, fontWeight: 'bold' }}>
+                      All Users
+                    </Typography>
+                    <Typography variant="body1" sx={{ color: '#a0a0a0', mb: 4 }}>
+                      Manage all users and their forms in the system
+                    </Typography>
+
+                    {/* Users Table */}
+                    <Box sx={{ 
+                      background: 'linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 3,
+                      boxShadow: 'var(--shadow-md)',
+                      overflow: 'hidden'
+                    }}>
+                      <TableContainer>
+                        <Table>
+                          <TableHead sx={{ 
+                            background: 'var(--bg-primary)',
+                            '& .MuiTableCell-head': {
+                              color: '#ffffff',
+                              fontWeight: 'bold',
+                              borderBottom: '1px solid var(--border-color)'
+                            }
+                          }}>
+                            <TableRow>
+                              <TableCell>User</TableCell>
+                              <TableCell>Email</TableCell>
+                              <TableCell>Role</TableCell>
+                              <TableCell>Forms</TableCell>
+                              <TableCell>Status</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {users.map((user) => (
+                              <TableRow 
+                                key={user._id}
+                                sx={{ 
+                                  '&:hover': {
+                                    background: 'rgba(42, 82, 77, 0.1)'
+                                  },
+                                  '& .MuiTableCell-body': {
+                                    color: '#ffffff',
+                                    borderBottom: '1px solid var(--border-color)'
+                                  }
+                                }}
+                              >
+                                <TableCell>
+                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                    <Avatar sx={{ 
+                                      bgcolor: 'rgba(42, 82, 77, 0.2)',
+                                      color: '#2A524D',
+                                      mr: 2,
+                                      width: 32,
+                                      height: 32
+                                    }}>
+                                      {user.firstName?.charAt(0) || user.email?.charAt(0)}
+                                    </Avatar>
+                                    <Typography>
+                                      {user.firstName} {user.lastName}
+                                    </Typography>
+                                  </Box>
+                                </TableCell>
+                                <TableCell>{user.email}</TableCell>
+                                <TableCell>
+                                  <Chip 
+                                    label={user.role} 
+                                    size="small"
+                                    color={user.role === 'admin' ? 'error' : 'primary'}
+                                    sx={{ 
+                                      bgcolor: user.role === 'admin' ? 'rgba(244, 67, 54, 0.2)' : 'rgba(33, 150, 243, 0.2)',
+                                      color: user.role === 'admin' ? '#f44336' : '#2196f3'
+                                    }}
+                                  />
+                                </TableCell>
+                                <TableCell>{user.formsCount || 0}</TableCell>
+                                <TableCell>
+                                  <Chip 
+                                    label={user.isActive ? 'Active' : 'Inactive'} 
+                                    size="small"
+                                    color={user.isActive ? 'success' : 'default'}
+                                    sx={{ 
+                                      bgcolor: user.isActive ? 'rgba(76, 175, 80, 0.2)' : 'rgba(158, 158, 158, 0.2)',
+                                      color: user.isActive ? '#4caf50' : '#9e9e9e'
+                                    }}
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Box>
                   </Box>
                 </>
               )}

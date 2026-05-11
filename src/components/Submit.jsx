@@ -401,13 +401,65 @@ const SubmitContent = ({ isPreview = false }) => {
     let isValid = true;
 
     currentSection.fields.forEach(field => {
-      if (field.required && !formData[field.id]) {
-        newErrors[field.id] = `${field.question} is required`;
-        isValid = false;
+      if (field.required) {
+        const val = formData[field.id];
+        let isMissing = false;
+
+        // 1. REPEATABLE GROUP LOGIC (Enhanced)
+        if (field.type === 'repeatable_group') {
+          if (!Array.isArray(val) || val.length === 0) {
+            // Case A: Group bilkul empty hai
+            isMissing = true;
+          } else {
+            // Case B: Check karein ke kya saary rows empty hain? (Required Check)
+            const isAllInstancesEmpty = val.every(instance => {
+              return Object.values(instance).every(v => !v || v === '');
+            });
+
+            if (isAllInstancesEmpty) {
+              isMissing = true;
+            } else {
+              // Case C: DEEP VALIDATION (Email inside group)
+              // Har row ko check karein
+              val.forEach((instance, rowIndex) => {
+                field.groupFields?.forEach(groupField => {
+                  const instanceValue = instance[groupField.id];
+                  
+                  // Sirf tab check karein jab user ne kuch type kiya ho
+                  if (instanceValue) {
+                    // 🔥 EMAIL VALIDATION
+                    if (groupField.type === 'email') {
+                      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                      if (!emailRegex.test(instanceValue)) {
+                        newErrors[field.id] = `Invalid email in row ${rowIndex + 1}`;
+                        isValid = false;
+                      }
+                    }
+                    // 🔥 NUMBER VALIDATION (Agar future mein lagana ho)
+                    // if (groupField.type === 'number') { ... }
+                  }
+                });
+              });
+            }
+          }
+        }
+        // 2. CHECKBOX LOGIC
+        else if (Array.isArray(val)) {
+          isMissing = val.length === 0;
+        }
+        // 3. NORMAL FIELDS LOGIC
+        else {
+          isMissing = !val || val === '';
+        }
+
+        if (isMissing) {
+          newErrors[field.id] = `${field.question} is required`;
+          isValid = false;
+        }
       }
 
-      // Email validation
-      if (field.type === 'email' && formData[field.id]) {
+      // Normal Email validation (non-repeatable)
+      if (field.type === 'email' && formData[field.id] && !Array.isArray(formData[field.id])) {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(formData[field.id])) {
           newErrors[field.id] = 'Please enter a valid email address';
@@ -431,34 +483,55 @@ const SubmitContent = ({ isPreview = false }) => {
   };
 
   // Helper function to evaluate a single condition
+  // Helper function to evaluate a single condition
   const evaluateCondition = (condition, fieldType, formData) => {
     if (!condition.fieldId) return false;
     
-    const conditionValue = formData[condition.fieldId];
+    const conditionValue = formData[condition.fieldId]; // User ne jo bhara hai
     const { operator, value } = condition;
     
-    // Handle different field types and operators
+    // 🔧 FIX FOR CHECKBOXES: Handle Arrays
     switch (operator) {
       case 'equals':
+        // Agar value Array hai (Checkboxes case), to check karein ke wo item list mein hai ya nahi
+        if (Array.isArray(conditionValue)) {
+          return conditionValue.includes(value);
+        }
+        // Normal string comparison
         return conditionValue === value;
+        
       case 'not_equals':
+        // Agar value Array hai (Checkboxes case)
+        if (Array.isArray(conditionValue)) {
+          return !conditionValue.includes(value);
+        }
         return conditionValue !== value;
+        
       case 'contains':
-        return conditionValue && conditionValue.toString().toLowerCase().includes(value.toString().toLowerCase());
+        // Text fields ke liye
+        if (!conditionValue) return false;
+        return conditionValue.toString().toLowerCase().includes(value.toString().toLowerCase());
+        
       case 'not_contains':
-        return !conditionValue || !conditionValue.toString().toLowerCase().includes(value.toString().toLowerCase());
+        if (!conditionValue) return true;
+        return !conditionValue.toString().toLowerCase().includes(value.toString().toLowerCase());
+        
       case 'greater_than':
         const num1 = parseFloat(conditionValue);
         const num2 = parseFloat(value);
         return !isNaN(num1) && !isNaN(num2) && num1 > num2;
+        
       case 'less_than':
         const num3 = parseFloat(conditionValue);
         const num4 = parseFloat(value);
         return !isNaN(num3) && !isNaN(num4) && num3 < num4;
+        
       case 'is_empty':
         return !conditionValue || conditionValue === '' || (Array.isArray(conditionValue) && conditionValue.length === 0);
+        
       case 'is_not_empty':
         return conditionValue && conditionValue !== '' && (!Array.isArray(conditionValue) || conditionValue.length > 0);
+        
       default:
         return false;
     }
@@ -488,165 +561,61 @@ const SubmitContent = ({ isPreview = false }) => {
   };
 
   // Handle Next button with branching logic
-  const handleNext = () => {
-    if (!validateCurrentSection()) return;
+  // Handle Next button with branching logic AND Submit logic
+  const handleNext = (e) => {
+    // 🔥 STEP 1: SAB SE PEHLE VALIDATION
+    // Agar current section mein koi required field khali hai to yahan ruk jayega
+    const isSectionValid = validateCurrentSection();
+    
+    if (!isSectionValid) {
+      console.log('❌ Section validation failed. Cannot jump.');
+      return; // 🛑 RUK JAO. Branching logic chalane ki zaroorat nahi.
+    }
 
-    // 🔧 FIXED: Set flag to indicate this is a Next button action
-    isNextActionRef.current = true;
+    // ✅ Agar yahan pohnch gaye, matlab section valid hai.
+    console.log('✅ Section validated. Checking branching logic...');
 
-    console.log('🔍 ===== STARTING BRANCHING LOGIC DEBUG =====');
-    console.log('📊 INPUT DATA:');
-    console.log('  Current Section Index:', currentSectionIndex);
-    console.log('  Total Sections:', totalSections);
-    console.log('  Current Section Fields:', currentSection.fields);
-    console.log('  Form Data:', formData);
-
-    // Get the list of fields for the currentSectionIndex
+    // 🔥 STEP 2: ISKE BAAD BRANCHING LOGIC
+    let jumpTriggered = false;
     const currentSectionFields = currentSection.fields;
-    console.log('🔄 ITERATING THROUGH FIELDS:');
-    console.log('  Number of fields to check:', currentSectionFields.length);
 
-    // Loop through these fields
     for (let fieldIndex = 0; fieldIndex < currentSectionFields.length; fieldIndex++) {
       const field = currentSectionFields[fieldIndex];
-      console.log(`\n🔍 FIELD ${fieldIndex + 1}/${currentSectionFields.length}:`);
-      console.log('  Field ID:', field.id);
-      console.log('  Field Question:', field.question);
-      console.log('  Field Type:', field.type);
-      console.log('  Has Conditional Logic:', !!field.conditionalLogic);
       
-      // Check if the field has conditionalLogic.enabled === true
       if (field.conditionalLogic && field.conditionalLogic.enabled) {
-        console.log('\n🎯 ===== FOUND FIELD WITH CONDITIONAL LOGIC =====');
-        console.log('  Field:', field.question);
-        console.log('  Field ID:', field.id);
-        console.log('  Full Logic Object:', JSON.stringify(field.conditionalLogic, null, 2));
-        
         const { conditions, action, jumpToFieldId } = field.conditionalLogic;
-        
-        console.log('\n📋 LOGIC EVALUATION:');
-        console.log('  Number of Conditions:', conditions?.length || 0);
-        console.log('  Action Type:', action);
-        console.log('  Jump To Field ID:', jumpToFieldId || 'NOT SET');
-        
-        // Debug: Check each condition
-        console.log('\n🔍 CONDITION DETAILS:');
-        conditions.forEach((condition, index) => {
-          const conditionField = findFieldById(condition.fieldId);
-          console.log(`  Condition ${index + 1}:`);
-          console.log('    Target Field ID:', condition.fieldId);
-          console.log('    Target Field Name:', conditionField?.question || 'FIELD NOT FOUND');
-          console.log('    Target Field Type:', conditionField?.type || 'UNKNOWN');
-          console.log('    Operator:', condition.operator);
-          console.log('    Expected Value:', condition.value);
-          console.log('    Current Value:', formData[condition.fieldId]);
-          console.log('    Is Value Available:', formData[condition.fieldId] !== undefined);
-        });
-        
-        // Evaluate Conditions
-        console.log('\n🧮 EVALUATING CONDITIONS...');
         const logicResult = evaluateConditions(conditions);
         
-        console.log('\n📊 LOGIC EVALUATION RESULT:');
-        console.log('  Result:', logicResult ? '✅ TRUE' : '❌ FALSE');
-        console.log('  Action:', action);
-        
-        // If Logic Result is TRUE
         if (logicResult) {
-          console.log('\n✅ CONDITIONS MET - CHECKING ACTION...');
-          
-          // Check if action === 'jump_to'
           if (action === 'jump_to' && jumpToFieldId) {
-            console.log('\n🎯 ===== JUMP LOGIC ACTIVATED =====');
-            console.log('🔥 CRITICAL - Jump To Field ID:', jumpToFieldId);
-            
-            console.log('\n📋 ENTIRE SECTIONS ARRAY STRUCTURE:');
-            sections.forEach((section, index) => {
-              console.log(`  Section ${index}:`);
-              console.log('    Section ID:', section.sectionId);
-              console.log('    Section Question:', section.section?.question || 'NO QUESTION');
-              console.log('    Section Type:', section.section?.type || 'NO TYPE');
-              console.log('    Number of Fields:', section.fields?.length || 0);
-              console.log('    Field IDs:', section.fields?.map(f => f.id) || []);
-            });
-            
-            console.log('\n🔍 FINDING TARGET SECTION...');
-            console.log('  Looking for Section ID:', jumpToFieldId);
-            
-            // Find the target section
             const targetSectionIndex = findSectionIndexByFieldId(jumpToFieldId);
             
-            console.log('\n🎯 FINDSECTIONINDEXBYFIELDID RESULT:');
-            console.log('  Target Section Index:', targetSectionIndex);
-            
             if (targetSectionIndex !== -1) {
-              console.log('\n🚀 ===== JUMP SUCCESSFUL =====');
-              console.log('  Jumping to section index:', targetSectionIndex);
-              console.log('  From section:', currentSectionIndex);
-              console.log('  To section:', targetSectionIndex);
-              console.log('  Target Section Question:', sections[targetSectionIndex]?.section?.question);
-              
-              // 🔧 NEW: Add current section to history before jumping
+              console.log('🚀 Jumping to section:', targetSectionIndex);
               previousSectionHistory.current.push(currentSectionIndex);
-              
-              // Set currentSectionIndex to that found index
               setCurrentSectionIndex(targetSectionIndex);
-              console.log('✅ Navigation completed - RETURNING');
-              console.log('📚 History updated:', previousSectionHistory.current);
-              return; // RETURN immediately (Stop the loop)
-            } else {
-              console.log('\n🚨 ===== TARGET SECTION NOT FOUND =====');
-              console.log('⚠️ WARNING: Target section not found for field ID:', jumpToFieldId);
-              console.log('🔍 AVAILABLE SECTION IDS:');
-              sections.forEach((section, index) => {
-                console.log(`  ${index}: ${section.sectionId} (${section.section?.question})`);
-              });
-              console.log('🔍 POSSIBLE ISSUES:');
-              console.log('  1. jumpToFieldId might be a FIELD ID instead of SECTION ID');
-              console.log('  2. Section ID mismatch or section not found');
-              console.log('  3. findSectionIndexByFieldId logic issue');
+              jumpTriggered = true;
+              break; // Loop se bahar
             }
-          } else {
-            console.log('\n❌ ACTION IS NOT JUMP_TO OR jumpToFieldId IS EMPTY');
-            console.log('  Action:', action);
-            console.log('  JumpToFieldId:', jumpToFieldId);
+          } else if (action === 'end_form') {
+             console.log('🏁 Ending form');
+             handleSubmit(e);
+             return;
           }
-        } else {
-          console.log('\n❌ CONDITIONS NOT MET - CONTINUING TO NEXT FIELD');
         }
-      } else {
-        console.log('  ❌ No conditional logic or logic not enabled');
       }
     }
 
-    // If no jump logic is triggered, default to setCurrentSectionIndex(prev => prev + 1)
-    console.log('\n➡️ ===== NO BRANCHING TRIGGERED - DEFAULT NAVIGATION =====');
-    console.log('  Current Section:', currentSectionIndex);
-    console.log('  Total Sections:', totalSections);
-    
-    if (currentSectionIndex < totalSections - 1) {
-      const nextIndex = currentSectionIndex + 1;
-      console.log('  Moving to next section:', nextIndex);
-      console.log('  Next Section Question:', sections[nextIndex]?.section?.question);
-      
-      // 🔧 NEW: Add current section to history before moving next
-      previousSectionHistory.current.push(currentSectionIndex);
-      console.log('📚 History updated (Next):', previousSectionHistory.current);
-      
-      setCurrentSectionIndex(nextIndex);
-    } else {
-      console.log('  🏁 Already at last section - cannot move forward');
+    // 🔥 STEP 3: NORMAL NAVIGATION
+    if (!jumpTriggered) {
+      if (currentSectionIndex === totalSections - 1) {
+        handleSubmit(e);
+      } else {
+        const nextIndex = currentSectionIndex + 1;
+        previousSectionHistory.current.push(currentSectionIndex);
+        setCurrentSectionIndex(nextIndex);
+      }
     }
-    
-    console.log('🔍 ===== ENDING BRANCHING LOGIC DEBUG =====\n');
-    
-    // 🔧 FIXED: Trigger visibility calculation with Next action flag
-    updateVisibility(true); // true = this is a Next button action
-    
-    // Reset flag after processing
-    setTimeout(() => {
-      isNextActionRef.current = false;
-    }, 100);
   };
 
   // 🔧 NEW: Intelligent Previous button - goes back to where user came from
@@ -787,7 +756,7 @@ const SubmitContent = ({ isPreview = false }) => {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
 
     if (!validateForm()) {
       return;
@@ -895,17 +864,15 @@ const SubmitContent = ({ isPreview = false }) => {
   };
 
   const renderField = (field) => {
-    // Skip hidden fields based on visibility
-    if (!visibleFieldIds.includes(field.id)) {
-      return null;
-    }
-
+    // Remove visibility filtering to ensure all fields are shown
+    // The visibility logic should be handled at section level, not individual field level
     const fieldValue = formData[field.id] || '';
     const fieldError = errors[field.id] || '';
 
     switch (field.type) {
       case 'text':
       case 'short_answer':
+      case 'paragraph':
         return (
           <TextField
             fullWidth
@@ -916,6 +883,8 @@ const SubmitContent = ({ isPreview = false }) => {
             helperText={fieldError}
             required={field.required}
             placeholder={field.placeholder}
+            multiline={field.type === 'paragraph'}
+            rows={field.type === 'paragraph' ? 4 : 1}
             sx={{
               mb: 3,
               '& .MuiOutlinedInput-root': {
@@ -1000,6 +969,93 @@ const SubmitContent = ({ isPreview = false }) => {
             helperText={fieldError}
             required={field.required}
             placeholder={field.placeholder}
+            sx={{
+              mb: 3,
+              '& .MuiOutlinedInput-root': {
+                bgcolor: 'rgba(42, 82, 77, 0.05)',
+                borderRadius: 2,
+                '&:hover': {
+                },
+                '&.Mui-focused': {
+                  bgcolor: 'rgba(42, 82, 77, 0.1)'
+                }
+              },
+              '& .MuiOutlinedInput-input': {
+                color: '#ffffff',
+                '&::placeholder': {
+                  color: '#a0a0a0'
+                }
+              },
+              '& .MuiInputLabel-root': {
+                color: '#000000',
+                '&.Mui-focused': {
+                  color: '#2A524D'
+                }
+              },
+              '& .MuiFormLabel-root': {
+                color: '#000000'
+              }
+            }}
+          />
+        );
+
+      case 'phone':
+        return (
+          <TextField
+            fullWidth
+            type="tel"
+            label={field.question}
+            value={fieldValue}
+            onChange={(e) => handleFieldChange(field.id, e.target.value)}
+            error={!!fieldError}
+            helperText={fieldError}
+            required={field.required}
+            placeholder={field.placeholder}
+            sx={{
+              mb: 3,
+              '& .MuiOutlinedInput-root': {
+                bgcolor: 'rgba(42, 82, 77, 0.05)',
+                borderRadius: 2,
+                '&:hover': {
+                },
+                '&.Mui-focused': {
+                  bgcolor: 'rgba(42, 82, 77, 0.1)'
+                }
+              },
+              '& .MuiOutlinedInput-input': {
+                color: '#ffffff',
+                '&::placeholder': {
+                  color: '#a0a0a0'
+                }
+              },
+              '& .MuiInputLabel-root': {
+                color: '#000000',
+                '&.Mui-focused': {
+                  color: '#2A524D'
+                }
+              },
+              '& .MuiFormLabel-root': {
+                color: '#000000'
+              }
+            }}
+          />
+        );
+
+      case 'date':
+        return (
+          <TextField
+            fullWidth
+            type="date"
+            label={field.question}
+            value={fieldValue}
+            onChange={(e) => handleFieldChange(field.id, e.target.value)}
+            error={!!fieldError}
+            helperText={fieldError}
+            required={field.required}
+            placeholder={field.placeholder}
+            InputLabelProps={{
+              shrink: true,
+            }}
             sx={{
               mb: 3,
               '& .MuiOutlinedInput-root': {
@@ -1589,14 +1645,20 @@ const SubmitContent = ({ isPreview = false }) => {
               )}
 
               {/* Current Section Fields */}
-              {currentSection?.fields?.map((field) => (
-                <Box key={field.id} sx={{ mb: 3 }} role="group" aria-label={`${field.type} field: ${field.question}`}>
-                  {renderField(field)}
-                </Box>
-              ))}
+              {console.log('🔍 RENDERING FIELDS - Current Section Fields:', currentSection?.fields)}
+              {currentSection?.fields?.map((field) => {
+                console.log('🔍 RENDERING FIELD:', field);
+                return (
+                  <Box key={field.id} sx={{ mb: 3 }} role="group" aria-label={`${field.type} field: ${field.question}`}>
+                    {renderField(field)}
+                  </Box>
+                );
+              })}
 
               {/* Navigation Buttons - Intelligent Previous + Next/Submit */}
+                            {/* Navigation Buttons - Unified Logic */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 4, gap: 2 }}>
+                
                 {/* Previous Button (if has history) */}
                 {previousSectionHistory.current.length > 0 && (
                   <Button
@@ -1625,64 +1687,34 @@ const SubmitContent = ({ isPreview = false }) => {
                 {/* Spacer */}
                 <Box sx={{ flexGrow: 1 }} />
 
-                {/* Next Button (if not last section) */}
-                {currentSectionIndex < totalSections - 1 && (
-                  <Button
-                    variant="contained"
-                    size="large"
-                    onClick={handleNext}
-                    sx={{
-                      bgcolor: '#2A524D',
-                      color: '#ffffff',
-                      px: 6,
-                      py: 2,
-                      fontSize: '1.1rem',
-                      fontWeight: 'bold',
-                      borderRadius: 2,
-                      '&:hover': {
-                        bgcolor: '#1e4037',
-                        transform: 'translateY(-2px)'
-                      }
-                    }}
-                  >
-                    Next
-                  </Button>
-                )}
-
-                {/* Submit Button (if last section) */}
-                {currentSectionIndex === totalSections - 1 && (
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    size="large"
-                    disabled={submitting || finalPreviewMode}
-                    onClick={finalPreviewMode ? (e) => {
-                      e.preventDefault();
-                      setSnackbar({ open: true, message: 'This is a preview mode', severity: 'warning' });
-                    } : undefined}
-                    startIcon={submitting ? <CircularProgress size={20} sx={{ color: '#ffffff' }} /> : <SendIcon />}
-                    sx={{
-                      bgcolor: finalPreviewMode ? 'rgba(42, 82, 77, 0.5)' : '#2A524D',
-                      color: '#ffffff',
-                      px: 6,
-                      py: 2,
-                      fontSize: '1.1rem',
-                      fontWeight: 'bold',
-                      borderRadius: 2,
-                      opacity: finalPreviewMode ? 0.5 : 1,
-                      cursor: finalPreviewMode ? 'not-allowed' : 'pointer',
-                      '&:hover': {
-                        bgcolor: finalPreviewMode ? 'rgba(42, 82, 77, 0.5)' : '#1e4037',
-                        transform: finalPreviewMode ? 'none' : 'translateY(-2px)'
-                      },
-                      '&:disabled': {
-                        bgcolor: 'rgba(42, 82, 77, 0.3)',
-                      }
-                    }}
-                  >
-                    {submitting ? 'Submitting...' : 'Submit Form'}
-                  </Button>
-                )}
+                {/* 🔧 CHANGED: Unified Button (Next / Submit) */}
+                {/* Is button ka type="button" rakhein taake form auto submit na ho. 
+                    Hum manually handleNext call karenge */}
+                <Button
+                  variant="contained"
+                  size="large"
+                  type="button" // Changed from type="submit" to type="button"
+                  onClick={handleNext} // Always calls handleNext
+                  disabled={submitting || finalPreviewMode}
+                  sx={{
+                    bgcolor: finalPreviewMode ? 'rgba(42, 82, 77, 0.5)' : '#2A524D',
+                    color: '#ffffff',
+                    px: 6,
+                    py: 2,
+                    fontSize: '1.1rem',
+                    fontWeight: 'bold',
+                    borderRadius: 2,
+                    opacity: finalPreviewMode ? 0.5 : 1,
+                    cursor: finalPreviewMode ? 'not-allowed' : 'pointer',
+                    '&:hover': {
+                      bgcolor: finalPreviewMode ? 'rgba(42, 82, 77, 0.5)' : '#1e4037',
+                      transform: finalPreviewMode ? 'none' : 'translateY(-2px)'
+                    },
+                  }}
+                >
+                  {submitting ? 'Submitting...' : 
+                   (currentSectionIndex === totalSections - 1 ? 'Submit Form' : 'Next')}
+                </Button>
               </Box>
             </Box>
           </Paper>

@@ -1,6 +1,11 @@
 // API service for form operations
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://monk-form-backend.vercel.app/api';
+const isLocal = window.location.hostname === 'localhost';
+const API_BASE_URL = isLocal 
+        ? 'http://localhost:5000/api'  // Local Development Backend
+        : 'https://monk-form-backend.vercel.app/api';
+
+// const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://monk-form-backend.vercel.app/api';
 
 // Helper function to get auth token
 const getAuthHeaders = () => {
@@ -8,6 +13,9 @@ const getAuthHeaders = () => {
   const headers = {
     'Content-Type': 'application/json',
   };
+  
+  console.log('🔐 getAuthHeaders - Token found:', !!token);
+  console.log('🔐 getAuthHeaders - Token value:', token ? `${token.substring(0, 20)}...` : 'null');
   
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -201,6 +209,49 @@ export const formApi = {
       console.error('Error evaluating form visibility:', error);
       throw error;
     }
+  },
+
+  // Admin API methods
+  getAllUsers: async () => {
+    console.log('🔍 formApi.getAllUsers - Making API call to:', `${API_BASE_URL}/admin/users`);
+    console.log('🔐 formApi.getAllUsers - Token:', localStorage.getItem('token'));
+    
+    const response = await fetch(`${API_BASE_URL}/admin/users`, {
+      headers: getAuthHeaders()
+    });
+    
+    console.log('📊 formApi.getAllUsers - Response status:', response.status);
+    console.log('📋 formApi.getAllUsers - Response ok:', response.ok);
+    
+    if (!response.ok) {
+      console.error('❌ formApi.getAllUsers - Failed to fetch users');
+      throw new Error('Failed to fetch users');
+    }
+    
+    const data = await response.json();
+    console.log('✅ formApi.getAllUsers - Data received:', data);
+    return data;
+  },
+
+  getFormsByUser: async (userId) => {
+    const response = await fetch(`${API_BASE_URL}/admin/users/${userId}/forms`, {
+      headers: getAuthHeaders()
+    });
+    if (!response.ok) {
+      throw new Error('Failed to fetch user forms');
+    }
+    return await response.json();
+  },
+
+  deleteUser: async (userId) => {
+    const response = await fetch(`${API_BASE_URL}/admin/users/${userId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    });
+    if (!response.ok) {
+      throw new Error('Failed to delete user');
+    }
+    return await response.json();
   }
 };
 
@@ -332,7 +383,7 @@ export const convertFieldsToQuestions = (fields) => {
       order: field.order || 0
     };
   });
-  
+
   console.log('Output questions:', result);
   return result;
 };

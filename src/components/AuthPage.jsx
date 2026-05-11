@@ -234,7 +234,7 @@ const AuthPage = ({ props }) => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e) => {
+    const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validateForm()) return;
 
@@ -244,9 +244,16 @@ const AuthPage = ({ props }) => {
     try {
       const endpoint = isSignIn ? 'login' : 'register';
       
-      // 🔧 ENVIRONMENT VARIABLE: Use Vite environment variable with fallback
-      const apiUrl = import.meta.env.VITE_API_BASE_URL || 'https://monk-form-backend.vercel.app/api';
-      console.log('API URL from environment:', apiUrl);
+      // --- AUTO URL SWITCHING LOGIC START ---
+      // Check kar rahe hain ke app localhost par hai ya production par
+      const isLocal = window.location.hostname === 'localhost';
+      
+      const apiUrl = isLocal 
+        ? 'http://localhost:5000/api'  // Local Development Backend
+        : 'https://monk-form-backend.vercel.app/api'; // Production Backend
+
+      console.log('Environment:', isLocal ? 'LOCAL' : 'PRODUCTION');
+      console.log('Hitting API:', `${apiUrl}/auth/${endpoint}`);
       
       const response = await axios.post(`${apiUrl}/auth/${endpoint}`, {
         firstName: formData.firstName,
@@ -257,6 +264,7 @@ const AuthPage = ({ props }) => {
       });
 
       const { token, user } = response.data;
+      console.log(user, 'Ahahahahah')
       
       // Store token and user data
       localStorage.setItem('token', token);

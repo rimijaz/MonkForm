@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { formApi, convertQuestionsToFields, convertFieldsToQuestions } from '../services/formApi';
 import { useTheme } from '../contexts/ThemeContext';
+
+// API base URL
+const isLocal = window.location.hostname === 'localhost';
+const API_BASE_URL = isLocal 
+        ? 'http://localhost:5000/api'  
+        : 'https://monk-form-backend.vercel.app/api';
+
 import Skip from './Skip';
 import Announcer from './Announcer';
 import GroupFieldEditor from './GroupFields';
@@ -587,8 +594,29 @@ const Builder = ({ children }) => {
     setLoading(true);
     
     try {
-      // Get form from the forms list (since we don't have getFormById anymore)
-      const response = await formApi.getForms();
+      // Check if user is admin
+      const userInfo = JSON.parse(localStorage.getItem('user') || '{}');
+      const isAdmin = userInfo?.role === 'admin';
+      
+      let response;
+      if (isAdmin) {
+
+        const adminResponse = await fetch(`${API_BASE_URL}/admin/forms`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (!adminResponse.ok) {
+          throw new Error('Failed to fetch admin forms');
+        }
+        const adminData = await adminResponse.json();
+        response = { success: true, data: adminData }; // Match regular API structure
+      } else {
+        // Regular user: Get their own forms
+        response = await formApi.getForms();
+      }
       
       if (response.success) {
         const form = response.data.find(f => f._id === formId);
@@ -628,40 +656,41 @@ const Builder = ({ children }) => {
   };
 
   // Fetch form responses
-  const fetchResponses = async () => {
-    if (!currentFormId) return;
-    
-    setResponsesLoading(true);
-    try {
-      // Get the form data from the forms list (same as dashboard)
-      const response = await formApi.getForms();
-      
-      if (response.success) {
-        const form = response.data.find(f => f._id === currentFormId);
-        
-        if (form && form.responses) {
-          setResponses(form.responses);
-        } else {
-          setResponses([]);
-        }
-      } else {
-        setResponses([]);
-      }
-    } catch (error) {
-      console.error('Error fetching responses:', error);
-      setResponses([]);
-    } finally {
-      setResponsesLoading(false);
-    }
-  };
+const fetchResponses = async () => {
+  setResponsesLoading(true);
 
+  try {
+    // Only fetch responses for current form
+    if (!currentFormId) {
+      setResponses([]);
+      return;
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/admin/responses?formId=${currentFormId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch responses');
+    }
+
+    const data = await response.json();
+    setResponses(data);
+
+  } catch (error) {
+    console.error('Error fetching responses:', error);
+    setResponses([]);
+  } finally {
+    setResponsesLoading(false);
+  }
+};
   const updateQuestion = (index, field, value) => {
-    console.log('🔍 Builder - updateQuestion called');
-    console.log('📋 Index:', index);
-    console.log('📋 Field:', field);
-    console.log('📋 Value:', value);
-    console.log('📋 Current field at index:', questions[index]);
-    
     // Normal field update
     setQuestions(prev => {
       const newQuestions = prev.map((q, i) => 
@@ -673,7 +702,6 @@ const Builder = ({ children }) => {
     });
   };
 
-  console.log(questions, 'Hahahahahah')
 
   const deleteQuestion = (index) => {
     setQuestions(prev => prev.filter((q, i) => i !== index));
@@ -1688,6 +1716,24 @@ const Builder = ({ children }) => {
           elevation={0}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Button
+              onClick={() => navigate('/dashboard')}
+              aria-label="Go back to dashboard"
+              variant="text"
+              size="small"
+              sx={{
+                color: '#2A524D',
+                textTransform: 'none',
+                fontWeight: 500,
+                minWidth: 'auto',
+                p: 1,
+                '&:hover': {
+                  bgcolor: 'rgba(42, 82, 77, 0.1)'
+                }
+              }}
+            >
+              <ArrowBackIcon sx={{ fontSize: '1.2rem' }} />
+            </Button>
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
               {formTitle}
             </Typography>
@@ -1778,7 +1824,7 @@ const Builder = ({ children }) => {
 
         {/* Tabs */}
         <Box className="builder-tabs" sx={{ borderBottom: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)', bgcolor: 'var(--bg-secondary)' }}>
-          <Box sx={{ display: 'flex' }}>
+          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
             {['questions', 'responses'].map((tab) => (
               <Button
                 key={tab}
@@ -2203,7 +2249,7 @@ const Builder = ({ children }) => {
 
           {activeTab === 'responses' && (
             <Fade in timeout={300}>
-              <Box>
+              <Box sx={{ maxWidth: '800px', mx: 'auto' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                   <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
                     Responses
@@ -2302,7 +2348,7 @@ const Builder = ({ children }) => {
                         {/* All Responses for this Question */}
                         <Box sx={{ p: 3 }}>
                           {responses.map((response, responseIndex) => {
-                            const fieldResponse = response.responses?.find(
+                            const fieldResponse = response.answers?.find(
                               r => r.fieldId === question.id
                             );
                             
